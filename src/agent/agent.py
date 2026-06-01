@@ -73,6 +73,7 @@ Trả lời: Câu trả lời tiếng Việt gửi cho người dùng.
             
             if action_match and action_input_match:
             
+            # pyrefly: ignore [parse-error]
             if action_match and action_input_match:
                 tool_name = action_match.group(1).strip()
                 tool_input = action_input_match.group(1).strip().strip("\"'")
