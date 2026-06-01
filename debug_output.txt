@@ -1,0 +1,2 @@
+Status: 500
+Body: {"error":"'charmap' codec can't encode character '\\u1ee3' in position 44: character maps to <undefined>"}
