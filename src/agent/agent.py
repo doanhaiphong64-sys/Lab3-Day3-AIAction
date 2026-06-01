@@ -1,74 +1,89 @@
-import os
 import re
-from typing import List, Dict, Any, Optional
+import json
+from typing import List, Dict, Any
 from src.core.llm_provider import LLMProvider
 from src.telemetry.logger import logger
+from src.telemetry.metrics import tracker
+
 
 class ReActAgent:
-    """
-    SKELETON: A ReAct-style Agent that follows the Thought-Action-Observation loop.
-    Students should implement the core loop logic and tool execution.
-    """
-    
-    def __init__(self, llm: LLMProvider, tools: List[Dict[str, Any]], max_steps: int = 5):
+    """A ReAct-style Agent following the Thought-Action-Observation loop."""
+
+    def __init__(self, llm: LLMProvider, tools: List[Dict[str, Any]], max_steps: int = 10):
         self.llm = llm
         self.tools = tools
         self.max_steps = max_steps
-        self.history = []
 
     def get_system_prompt(self) -> str:
-        """
-        TODO: Implement the system prompt that instructs the agent to follow ReAct.
-        Should include:
-        1.  Available tools and their descriptions.
-        2.  Format instructions: Thought, Action, Observation.
-        """
-        tool_descriptions = "\n".join([f"- {t['name']}: {t['description']}" for t in self.tools])
-        return f"""
-        You are an intelligent assistant. You have access to the following tools:
-        {tool_descriptions}
+        tool_descriptions = "\n".join(
+            [f"- {t['name']}: {t['description']}" for t in self.tools]
+        )
+        tool_names = ", ".join([t["name"] for t in self.tools])
+        return f"""You are an intelligent assistant that solves tasks step by step using tools.
+                Available tools:
+                {tool_descriptions}
 
-        Use the following format:
-        Thought: your line of reasoning.
-        Action: tool_name(arguments)
-        Observation: result of the tool call.
-        ... (repeat Thought/Action/Observation if needed)
-        Final Answer: your final response.
-        """
+                Use EXACTLY this format, one step at a time:
+                Thought: your reasoning about what to do next.
+                Action: one of [{tool_names}]
+                Action Input: a JSON object with the tool arguments.
+
+                After each Action you will receive an Observation. Reuse facts from previous
+                Observations (e.g. flight destination/dates -> hotel; chosen hotel -> nearby
+                evening activities) to keep every step consistent.
+
+                When you have enough information, respond with:
+                Thought: I now have everything I need.
+                Final Answer: your complete answer to the user."""
 
     def run(self, user_input: str) -> str:
-        """
-        TODO: Implement the ReAct loop logic.
-        1. Generate Thought + Action.
-        2. Parse Action and execute Tool.
-        3. Append Observation to prompt and repeat until Final Answer.
-        """
         logger.log_event("AGENT_START", {"input": user_input, "model": self.llm.model_name})
-        
-        current_prompt = user_input
-        steps = 0
+        system_prompt = self.get_system_prompt()
+        transcript = f"Question: {user_input}\n"
 
-        while steps < self.max_steps:
-            # TODO: Generate LLM response
-            # result = self.llm.generate(current_prompt, system_prompt=self.get_system_prompt())
-            
-            # TODO: Parse Thought/Action from result
-            
-            # TODO: If Action found -> Call tool -> Append Observation
-            
-            # TODO: If Final Answer found -> Break loop
-            
-            steps += 1
-            
-        logger.log_event("AGENT_END", {"steps": steps})
-        return "Not implemented. Fill in the TODOs!"
+        for step in range(1, self.max_steps + 1):
+            result = self.llm.generate(transcript, system_prompt=system_prompt)
+            content = result["content"]
+            tracker.track_request(
+                result.get("provider", "unknown"),
+                self.llm.model_name,
+                result.get("usage", {}),
+                result.get("latency_ms", 0),
+            )
+
+            # Stop at the first Observation the model may hallucinate.
+            content = content.split("Observation:")[0].strip()
+            logger.log_event("AGENT_STEP", {"step": step, "content": content})
+
+            final = re.search(r"Final Answer:\s*(.*)", content, re.DOTALL)
+            if final:
+                answer = final.group(1).strip()
+                logger.log_event("AGENT_END", {"steps": step, "status": "final_answer"})
+                return answer
+
+            action = re.search(r"Action:\s*(.+)", content)
+            action_input = re.search(r"Action Input:\s*(\{.*\})", content, re.DOTALL)
+            if not action:
+                transcript += content + "\nObservation: Invalid format. Use Action + Action Input (JSON) or Final Answer.\n"
+                continue
+
+            tool_name = action.group(1).strip()
+            args = action_input.group(1) if action_input else "{}"
+            observation = self._execute_tool(tool_name, args)
+            logger.log_event("TOOL_CALL", {"tool": tool_name, "args": args, "observation": observation})
+
+            transcript += f"{content}\nObservation: {observation}\n"
+
+        logger.log_event("AGENT_END", {"steps": self.max_steps, "status": "max_steps"})
+        return "Đã đạt giới hạn số bước mà chưa có câu trả lời cuối cùng."
 
     def _execute_tool(self, tool_name: str, args: str) -> str:
-        """
-        Helper method to execute tools by name.
-        """
         for tool in self.tools:
-            if tool['name'] == tool_name:
-                # TODO: Implement dynamic function calling or simple if/else
-                return f"Result of {tool_name}"
-        return f"Tool {tool_name} not found."
+            if tool["name"] == tool_name:
+                try:
+                    kwargs = json.loads(args)
+                    result = tool["func"](**kwargs)
+                    return json.dumps(result, ensure_ascii=False)
+                except Exception as e:
+                    return f"Error executing {tool_name}: {e}"
+        return f"Tool '{tool_name}' not found. Available: {[t['name'] for t in self.tools]}"
