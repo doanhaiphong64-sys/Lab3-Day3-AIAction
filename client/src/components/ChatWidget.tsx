@@ -31,14 +31,14 @@ export const ChatWidget: React.FC = () => {
     const loadingId = (Date.now() + 1).toString();
     setMessages(prev => [...prev, { id: loadingId, text: 'Đang suy nghĩ...', isBot: true }]);
 
-    // Call Local Phi-3 API
-    import('../gemini').then(async ({ sendMessage }) => {
-      const reply = await sendMessage(currentMessage);
-      
-      // Replace loading message with actual reply
-      setMessages(prev => prev.map(msg => 
-        msg.id === loadingId ? { ...msg, text: reply } : msg
-      ));
+    // Call Local Phi-3 API with Streaming
+    import('../gemini').then(async ({ streamMessage }) => {
+      await streamMessage(currentMessage, (chunk) => {
+        // Replace loading message with streaming reply
+        setMessages(prev => prev.map(msg => 
+          msg.id === loadingId ? { ...msg, text: chunk } : msg
+        ));
+      });
     });
   };
 

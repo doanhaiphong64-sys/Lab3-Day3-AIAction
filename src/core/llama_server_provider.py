@@ -51,6 +51,41 @@ class LlamaServerProvider(LLMProvider):
         }
 
     def stream(self, prompt: str, system_prompt: Optional[str] = None) -> Generator[str, None, None]:
-        # Simple non-streaming fallback for now
-        res = self.generate(prompt, system_prompt)
-        yield res["content"]
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        payload = {
+            "model": "phi-3",
+            "messages": messages,
+            "temperature": 0.7,
+            "max_tokens": 1024,
+            "stream": True,
+            "stop": ["Observation:", "Observation", "\nObservation", "Kết quả:", "\nKết quả:", "Kết quả", "\nKết quả"]
+        }
+
+        import json
+        try:
+            response = requests.post(f"{self.api_url}/chat/completions", json=payload, stream=True, timeout=120)
+            response.raise_for_status()
+            
+            for line in response.iter_lines():
+                if line:
+                    decoded_line = line.decode('utf-8')
+                    if decoded_line.startswith('data: '):
+                        data_str = decoded_line[6:]
+                        if data_str == '[DONE]':
+                            break
+                        try:
+                            data = json.loads(data_str)
+                            if 'choices' in data and len(data['choices']) > 0:
+                                delta = data['choices'][0].get('delta', {})
+                                content = delta.get('content', '')
+                                if content:
+                                    yield content
+                        except json.JSONDecodeError:
+                            continue
+        except Exception as e:
+            yield f"\n[Llama Server Streaming Error: {e}]"
+

@@ -1,6 +1,6 @@
 import os
 import re
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Generator
 from src.core.llm_provider import LLMProvider
 from src.telemetry.logger import logger
 
@@ -72,9 +72,6 @@ Trả lời: Câu trả lời tiếng Việt gửi cho người dùng.
                 return final_answer
             
             if action_match and action_input_match:
-            
-            # pyrefly: ignore [parse-error]
-            if action_match and action_input_match:
                 tool_name = action_match.group(1).strip()
                 tool_input = action_input_match.group(1).strip().strip("\"'")
                 
@@ -91,6 +88,55 @@ Trả lời: Câu trả lời tiếng Việt gửi cho người dùng.
             
         logger.log_event("AGENT_END", {"steps": steps})
         return "Xin lỗi, tôi đã mất quá nhiều thời gian suy nghĩ. Hãy thử hỏi lại nhé!"
+
+    def run_stream(self, user_input: str) -> Generator[str, None, None]:
+        logger.log_event("AGENT_START_STREAM", {"input": user_input, "model": self.llm.model_name})
+        
+        current_prompt = f"User: {user_input}\n"
+        steps = 0
+
+        while steps < self.max_steps:
+            buffer = ""
+            is_final_answer = False
+            
+            for chunk in self.llm.stream(current_prompt, system_prompt=self.get_system_prompt()):
+                buffer += chunk
+                
+                # Check if we hit the Final Answer marker
+                if not is_final_answer:
+                    if "Trả lời:" in buffer:
+                        is_final_answer = True
+                        parts = buffer.split("Trả lời:")
+                        if len(parts) > 1 and parts[1]:
+                            yield parts[1].lstrip()
+                else:
+                    # We are in final answer mode, yield directly
+                    yield chunk
+            
+            current_prompt += f"{buffer}\n"
+            
+            if is_final_answer:
+                logger.log_event("AGENT_END_STREAM", {"steps": steps})
+                return
+            
+            # Parse Action and Action Input
+            action_match = re.search(r"(?:Công cụ|Action|Tên của công cụ|Công cụ sử dụng):\s*(\w+)", buffer, re.IGNORECASE)
+            action_input_match = re.search(r"(?:Tham số|Action Input|Input của công cụ|Input):\s*(.+)", buffer, re.IGNORECASE)
+            
+            if action_match and action_input_match:
+                tool_name = action_match.group(1).strip()
+                tool_input = action_input_match.group(1).strip().strip("\"'")
+                
+                observation = self._execute_tool(tool_name, tool_input)
+                current_prompt += f"Kết quả: {observation}\n"
+            else:
+                cleaned = re.sub(r"^(?:Suy nghĩ|Thought|Thông sử):\s*", "", buffer, flags=re.IGNORECASE).strip()
+                yield cleaned
+                return
+
+            steps += 1
+            
+        yield "\nXin lỗi, tôi đã mất quá nhiều thời gian suy nghĩ. Hãy thử hỏi lại nhé!"
 
     def _execute_tool(self, tool_name: str, args: str) -> str:
         """

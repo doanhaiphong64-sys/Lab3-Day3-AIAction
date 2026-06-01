@@ -60,6 +60,31 @@ def chat():
         import traceback
         return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
+@app.route('/api/chat_stream', methods=['POST'])
+def chat_stream():
+    """API Endpoint to process chat and stream response using Server-Sent Events."""
+    from flask import Response
+    data = request.json
+    if not data or 'message' not in data:
+        return jsonify({"error": "Missing 'message' in request body"}), 400
+        
+    user_message = data['message']
+    
+    if not agent:
+        return jsonify({"error": "Agent not ready"}), 503
+
+    def generate():
+        try:
+            for chunk in agent.run_stream(user_message):
+                # We yield exactly what SSE expects
+                yield f"data: {chunk}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            yield f"data: [ERROR] {str(e)}\n\n"
+
+    return Response(generate(), mimetype='text/event-stream')
+
+
 @app.route('/api/status', methods=['GET'])
 def status():
     """Check if the API and model are running."""
