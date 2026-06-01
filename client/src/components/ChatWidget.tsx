@@ -17,23 +17,29 @@ export const ChatWidget: React.FC = () => {
     scrollToBottom();
   }, [messages, isOpen]);
 
-  const handleSend = (e: React.FormEvent) => {
+  const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!message.trim()) return;
 
+    const currentMessage = message;
     // Add user message
-    const userMsg = { id: Date.now().toString(), text: message, isBot: false };
+    const userMsg = { id: Date.now().toString(), text: currentMessage, isBot: false };
     setMessages(prev => [...prev, userMsg]);
     setMessage('');
+    
+    // Add loading indicator
+    const loadingId = (Date.now() + 1).toString();
+    setMessages(prev => [...prev, { id: loadingId, text: 'Đang suy nghĩ...', isBot: true }]);
 
-    // Mock bot reply after a short delay
-    setTimeout(() => {
-      setMessages(prev => [...prev, {
-        id: (Date.now() + 1).toString(),
-        text: 'Cảm ơn bạn đã liên hệ. Hiện tại tôi đang là phiên bản thử nghiệm. Nhân viên tư vấn sẽ sớm liên hệ lại để hỗ trợ chi tiết cho lịch trình của bạn.',
-        isBot: true
-      }]);
-    }, 1000);
+    // Call Local Phi-3 API
+    import('../gemini').then(async ({ sendMessage }) => {
+      const reply = await sendMessage(currentMessage);
+      
+      // Replace loading message with actual reply
+      setMessages(prev => prev.map(msg => 
+        msg.id === loadingId ? { ...msg, text: reply } : msg
+      ));
+    });
   };
 
   return (
