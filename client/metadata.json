@@ -1,0 +1,6 @@
+{
+  "name": "TravelHub VietNam",
+  "description": "Nền tảng đặt vé máy bay, phòng khách sạn và quản lý lịch trình du lịch.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
