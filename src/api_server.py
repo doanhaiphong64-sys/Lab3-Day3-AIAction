@@ -3,12 +3,8 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
 
-# Ensure we import from the local package
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from src.core.local_provider import LocalProvider
-from src.chatbot import Chatbot
 
 load_dotenv()
 
@@ -18,67 +14,61 @@ CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 # Global instances
 llm_provider = None
-chatbot = None
+agent = None
 
 def init_ai():
-    """Initialize the Local Phi-3 Model."""
-    global llm_provider, chatbot
+    """Initialize the ReAct Agent with LlamaServerProvider."""
+    global llm_provider, agent
     
-    if chatbot is not None:
-        return  # Already initialized
-        
-    model_path = os.getenv("LOCAL_MODEL_PATH", "./models/Phi-3-mini-4k-instruct-q4.gguf")
-    
-    if not os.path.exists(model_path):
-        print(f"ERROR: Model file not found at {model_path}")
+    if agent is not None:
         return
         
     try:
-        print(f"Loading Phi-3 model from {model_path}...")
-        # Note: n_ctx=4096 for Phi-3-mini-4k
-        llm_provider = LocalProvider(model_path=model_path, n_ctx=4096)
-        chatbot = Chatbot(llm=llm_provider)
-        print("Model loaded successfully!")
+        from src.core.llama_server_provider import LlamaServerProvider
+        from src.agent.agent import ReActAgent
+        from src.tools.tool_registry import get_default_tools
+        
+        # We assume llama-server is running on port 8080
+        llm_provider = LlamaServerProvider(api_url="http://127.0.0.1:8080/v1")
+        
+        # Load tools
+        registry = get_default_tools()
+        
+        # Create agent
+        agent = ReActAgent(llm=llm_provider, registry=registry, max_steps=5)
     except Exception as e:
-        print(f"Failed to load model: {e}")
+        pass # Handle gracefully below if agent is None
 
 @app.route('/api/chat', methods=['POST'])
 def chat():
-    """API Endpoint to chat with the Phi-3 model."""
-    global chatbot
-    
-    if chatbot is None:
-        init_ai()
-        
-    if chatbot is None:
-        return jsonify({"error": "AI model is not loaded. Check server logs."}), 503
-        
+    """API Endpoint to process chat via ReAct Agent."""
     data = request.json
     if not data or 'message' not in data:
         return jsonify({"error": "Missing 'message' in request body"}), 400
         
     user_message = data['message']
-    print(f"User: {user_message}")
+    
+    if not agent:
+        return jsonify({"response": "🤖 Hệ thống Agent chưa sẵn sàng. Vui lòng thử lại sau."})
     
     try:
-        # Use the chatbot to generate a response
-        response = chatbot.chat(user_message)
-        print(f"AI: {response}")
-        return jsonify({"response": response})
+        # Chạy Agent loop
+        final_answer = agent.run(user_message)
+        return jsonify({"response": final_answer})
+            
     except Exception as e:
-        print(f"Error generating response: {e}")
-        return jsonify({"error": str(e)}), 500
+        import traceback
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
 @app.route('/api/status', methods=['GET'])
 def status():
     """Check if the API and model are running."""
     return jsonify({
         "status": "ok", 
-        "model_loaded": chatbot is not None
+        "agent_loaded": agent is not None
     })
 
 if __name__ == '__main__':
     # Initialize the model before starting the server
-    print("Starting TravelHub AI Backend Server...")
     init_ai()
     app.run(host='0.0.0.0', port=5000, debug=False)

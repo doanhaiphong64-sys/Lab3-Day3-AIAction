@@ -82,20 +82,14 @@ def run_agent(provider):
     """Run the ReAct Agent (with tools and reasoning loop)."""
     from src.agent.agent import ReActAgent
 
-    # TODO: Register your tools here
-    # from src.tools.tool_registry import ToolRegistry
-    # registry = ToolRegistry()
-    # registry.register("check_stock", "...", check_stock_fn)
-    # tools = registry.get_tool_specs()
-
-    tools = []  # Empty for now - students implement tools
-
-    agent = ReActAgent(llm=provider, tools=tools, max_steps=5)
+    from src.tools.tool_registry import get_default_tools
+    registry = get_default_tools()
+    agent = ReActAgent(llm=provider, registry=registry, max_steps=5)
 
     print("=" * 60)
     print("  MODE: ReAct Agent")
     print(f"  Provider: {provider}")
-    print(f"  Tools: {[t['name'] for t in tools] if tools else 'None (implement your tools!)'}")
+    print(f"  Tools: {[t['name'] for t in agent.tools] if agent.tools else 'None (implement your tools!)'}")
     print("  Type 'quit' to exit")
     print("=" * 60)
 
